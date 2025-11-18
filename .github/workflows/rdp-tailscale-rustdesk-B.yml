@@ -192,7 +192,7 @@ jobs:
             Write-Host "Purge disabled."
           }
 
-      - name: Install + Up Tailscale
+      - name: Install + Up Tailscale (optimized for low latency)
         run: |
           $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
           if (-not (Test-Path $ts)) {
@@ -203,12 +203,12 @@ jobs:
             Remove-Item $dst -Force
           }
           & $ts logout | Out-Null
-          & $ts up --authkey "${{ inputs.ts_authkey }}" --hostname "$env:TS_HOSTNAME" --accept-dns=true --accept-routes=true
+          & $ts up --authkey "${{ inputs.ts_authkey }}" --hostname "$env:TS_HOSTNAME" --accept-dns=false --accept-routes=false --advertise-exit-node=false --shields-up=false
           $ip4 = & $ts ip -4 | Select-Object -First 1
           "TAILSCALE_IP=$ip4" | Out-File -Append $env:GITHUB_ENV
           Write-Host "Tailscale IPv4: $ip4"
 
-      - name: Enable RDP user + firewall
+      - name: Enable RDP user + firewall + Performance optimizations
         run: |
           $u=$env:RDP_USER; $p=$env:RDP_PASS
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
@@ -224,7 +224,31 @@ jobs:
           }
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
-          Write-Host "RDP ready. user=$u pass=$p host=$env:TS_HOSTNAME ip=$env:TAILSCALE_IP"
+          
+          # RDP Performance Registry Tweaks for Low Latency
+          $rdpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+          Set-ItemProperty -Path $rdpPath -Name "MinEncryptionLevel" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "SecurityLayer" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "UserAuthentication" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "fDisableCam" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "fDisableCdm" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "fDisableCpm" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "fDisableLPT" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $rdpPath -Name "fEnableWinStation" -Value 1 -Type DWord -Force
+          
+          # Disable bandwidth throttling
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched" -Name "NonBestEffortLimit" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+          
+          # Network adapter optimizations
+          Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | ForEach-Object {
+            Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName "Interrupt Moderation" -DisplayValue "Disabled" -ErrorAction SilentlyContinue
+            Disable-NetAdapterPowerManagement -Name $_.Name -ErrorAction SilentlyContinue
+          }
+          
+          # Disable Windows visual effects for better performance
+          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "RDP ready with performance optimizations. user=$u pass=$p host=$env:TS_HOSTNAME ip=$env:TAILSCALE_IP"
 
       - name: Install Python libs (pyautogui/pynput/pillow)
         run: |
@@ -232,7 +256,7 @@ jobs:
           python -m pip install --force-reinstall pyautogui pynput pillow
           python -c "import pyautogui, pynput, PIL; print('Python libs OK')"
 
-      - name: Install RustDesk
+      - name: Install RustDesk + Configure for low latency
         run: |
           $rdExe = "C:\Program Files\RustDesk\rustdesk.exe"
           if (-not (Test-Path $rdExe)) {
@@ -248,7 +272,27 @@ jobs:
             }
           }
           if (-not (Test-Path $rdExe)) { Write-Error "RustDesk not found after install"; exit 1 }
-          Write-Host "RustDesk installed."
+          
+          # Configure RustDesk for better performance
+          $configPath = "$env:APPDATA\RustDesk\config\RustDesk2.toml"
+          $configDir = Split-Path $configPath
+          if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+          
+          $config = @"
+[options]
+codec-preference = "vp9"
+custom-image-quality = 90
+enable-file-transfer = true
+enable-clipboard = true
+enable-audio = true
+disable-audio = false
+view-only = false
+show-remote-cursor = true
+follow-remote-cursor = false
+follow-remote-window = false
+"@
+          Set-Content -Path $configPath -Value $config -Force -ErrorAction SilentlyContinue
+          Write-Host "RustDesk installed with optimized config."
 
       - name: Open RustDesk ports (TCP 21115-21119, UDP 21116)
         run: |
