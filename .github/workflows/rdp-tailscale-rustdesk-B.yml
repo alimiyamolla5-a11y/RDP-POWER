@@ -278,19 +278,7 @@ jobs:
           $configDir = Split-Path $configPath
           if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
           
-          $config = @"
-[options]
-codec-preference = "vp9"
-custom-image-quality = 90
-enable-file-transfer = true
-enable-clipboard = true
-enable-audio = true
-disable-audio = false
-view-only = false
-show-remote-cursor = true
-follow-remote-cursor = false
-follow-remote-window = false
-"@
+          $config = "[options]`ncodec-preference = `"vp9`"`ncustom-image-quality = 90`nenable-file-transfer = true`nenable-clipboard = true`nenable-audio = true`ndisable-audio = false`nview-only = false`nshow-remote-cursor = true`nfollow-remote-cursor = false`nfollow-remote-window = false"
           Set-Content -Path $configPath -Value $config -Force -ErrorAction SilentlyContinue
           Write-Host "RustDesk installed with optimized config."
 
